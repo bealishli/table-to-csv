@@ -47,6 +47,40 @@ async function main() {
   renderSelector(tables);
 }
 
+// ---- 单元格文本提取（多策略） ----
+// 应对 innerText 为空的情况：图片、SVG、user-select:none、Canvas 等
+function extractCellText(cell) {
+  // 策略1: innerText（尊重 CSS 隐藏和 user-select）
+  const inner = (cell.innerText || '').trim().replace(/\n+/g, ' ');
+  if (inner) return inner;
+
+  // 策略2: textContent（不尊重 CSS，但能拿到所有文本节点）
+  const content = (cell.textContent || '').trim().replace(/\n+/g, ' ');
+  if (content) return content;
+
+  // 策略3: aria-label / title 属性（常用于无障碍的图标表头）
+  const ariaLabel = cell.getAttribute('aria-label') || cell.getAttribute('title') || '';
+  if (ariaLabel.trim()) return ariaLabel.trim();
+
+  // 策略4: img 的 alt 文本
+  const img = cell.querySelector('img');
+  if (img) {
+    const alt = (img.getAttribute('alt') || '').trim();
+    if (alt) return alt;
+  }
+
+  // 策略5: SVG 的 title 或 aria-label
+  const svg = cell.querySelector('svg');
+  if (svg) {
+    const svgTitle = svg.querySelector('title');
+    if (svgTitle && svgTitle.textContent.trim()) return svgTitle.textContent.trim();
+    const svgAria = svg.getAttribute('aria-label') || '';
+    if (svgAria.trim()) return svgAria.trim();
+  }
+
+  return '';
+}
+
 // ---- Content script (注入到页面执行) ----
 function extractTables() {
   const tableEls = document.querySelectorAll('table');
@@ -69,7 +103,8 @@ function extractTables() {
         // 跳过已被 rowspan 占据的列
         while (matrix[ri][colIdx] !== undefined) colIdx++;
 
-        const text = td.innerText.trim().replace(/\n+/g, ' ');
+        // 多策略提取单元格文本，应对不可复制/不可选中的内容
+        const text = extractCellText(td);
         const cs = parseInt(td.getAttribute('colspan')) || 1;
         const rs = parseInt(td.getAttribute('rowspan')) || 1;
 
