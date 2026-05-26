@@ -91,8 +91,8 @@ function extractTables() {
   }
 
   // 解析单个 table 元素的行为矩阵
-  // colspan/rowspan 合并单元格：被覆盖的格子也填充原始文本（而非空串）
-  // 这样 CSV 导出时每行数据都是完整的，不会因 rowspan 导致部分列空缺
+  // colspan/rowspan 合并单元格：左上角填文本，其余占位填空串
+  // 这是 HTML 表格的标准展开方式，确保列对齐正确
   function parseTableToMatrix(tableEl) {
     const allRows = tableEl.querySelectorAll('tr');
     const matrix = [];
@@ -119,8 +119,9 @@ function extractTables() {
           for (let c = 0; c < cs; c++) {
             const targetRow = ri + r;
             while (matrix.length <= targetRow) matrix.push([]);
-            // 合并区域所有格子都填原始文本，确保每行数据完整
-            matrix[targetRow][colIdx + c] = text;
+            // 只有左上角填文本，其余填空串占位
+            // 这样 rowspan/colspan 的占位不会干扰后续行数据的列对齐
+            matrix[targetRow][colIdx + c] = (r === 0 && c === 0) ? text : '';
           }
         }
 
@@ -239,24 +240,20 @@ function extractTables() {
     let headers, dataRows;
 
     if (hasHeader) {
-      // 检测连续的表头行：如果多行表头（如 rowspan 的分组表头），
-      // 合并为单行，用 " / " 连接多级内容
-      let headerEndIdx = 1; // 默认第一行是表头
+      // 检测多行表头：从 matrix 开头向下看，如果连续行中有大量空串（被 rowspan 占位），
+      // 说明这些行属于同一个多行表头区域
+      let headerEndIdx = 1;
 
-      // 检查是否有跨行表头：如果第二行中有格子已被第一行占位（值相同），
-      // 说明第一行有 rowspan，属于多行表头
+      // 简化判断：如果有 <thead> 且包含多行 <tr>，表头行数为 thead 内 tr 的数量
+      // 但注入时已经丢失了 DOM 信息，所以用矩阵内容推断：
+      // 如果第2行大量为空串（被表头的 rowspan 占位），说明是多行表头
       if (matrix.length > 1) {
-        // 更可靠的方式：如果第一行和第二行有相同值在同一列，
-        // 且第一行该列的 td/th 有 rowspan>1，则属于多行表头
-        // 简化：如果第二行大部分值和第一行相同（被 rowspan 填充），则视为多行表头
-        const row1 = matrix[0];
         const row2 = matrix[1];
-        let sameCount = 0;
-        for (let c = 0; c < maxCols; c++) {
-          if (row1[c] === row2[c] && row1[c] !== '') sameCount++;
-        }
-        if (sameCount > maxCols * 0.5) {
-          headerEndIdx = 2; // 两行表头
+        const emptyCount = row2.filter(c => c === '').length;
+        // 如果第2行超过60%是空串，且第1行非空，说明第1行有 rowspan 跨到第2行
+        // 这是多行表头的典型特征
+        if (emptyCount > maxCols * 0.6 && matrix[0].some(c => c !== '')) {
+          headerEndIdx = 2;
         }
       }
 
@@ -267,10 +264,7 @@ function extractTables() {
           const parts = [];
           for (let r = 0; r < headerEndIdx; r++) {
             const val = matrix[r]?.[c] ?? '';
-            // 去重：同一列如果多行值相同（被 rowspan 填充），只取一次
-            if (val && (!parts.length || parts[parts.length - 1] !== val)) {
-              parts.push(val);
-            }
+            if (val) parts.push(val);
           }
           headers.push(parts.join(' / '));
         }
